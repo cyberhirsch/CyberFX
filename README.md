@@ -17,8 +17,6 @@ This project stands on the shoulders of giants. Special thanks to:
 - **Frank Force (KilledByAPixel)**: For the brilliant [ZzFX](https://github.com/KilledByAPixel/ZzFX) DSP architecture and original implementation.
 - **Stephen Lavelle (Incredible Ape)**: For the creation of [Bfxr](https://www.bfxr.net/), which inspired much of the feature set.
 - **Tomas Pettersson (DrPetter)**: For the original [Sfxr](http://www.drpetter.se/project_sfxr.html), the progenitor of parametric sound generators.
-- **[CyberHirsch](https://github.com/cyberhirsch)**: Project lead, architecture, and integration.
-- **Antigravity (Google DeepMind)**: Implementation, feature expansion, and refinement.
 
 ## License
 
