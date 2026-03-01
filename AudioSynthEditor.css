@@ -1033,30 +1033,6 @@ body {
     display: flex;
 }
 
-#footer {
-    height: fit-content;
-    width: fit-content;
-    padding-top: 5px;
-    text-align: center;
-    margin: 6px auto 0;
-    background-color: #141728;
-    border-radius: 4px;
-    padding: 5px 12px;
-    box-shadow: 0 0 0 1px #2e3358;
-    font-size: var(--font-size-small);
-    color: var(--panel-disabled-text-color);
-}
-
-#footer a {
-    color: var(--accent-color);
-    text-decoration: none;
-    opacity: 0.8;
-    transition: opacity 0.15s;
-}
-
-#footer a:hover {
-    opacity: 1;
-}
 
 .left_panel {
     min-width: 185px;
@@ -1423,8 +1399,10 @@ button[id$="_play"]:hover {
     padding: 5px 8px;
 }
 
-.lockcolumn {
+.lockcolumn, .resetcolumn {
     user-select: none;
+    width: 25px;
+    text-align: center;
 }
 
 .normie_checkbox {
@@ -1446,6 +1424,7 @@ button[id$="_play"]:hover {
     background-image: url("img/locked.png");
     background-repeat: no-repeat;
     background-position: center;
+    cursor: pointer;
     filter: invert(0.6) sepia(1) hue-rotate(200deg) brightness(1.2);
 }
 
@@ -1453,6 +1432,40 @@ button[id$="_play"]:hover {
     background-image: url("img/unlocked.png");
     filter: invert(0.4) sepia(0.5) hue-rotate(200deg);
     opacity: 0.4;
+}
+
+.lockimage:hover {
+    opacity: 1;
+    filter: invert(0.8) sepia(1) hue-rotate(200deg) brightness(1.5);
+}
+
+.resetimage {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    padding: 0;
+    margin-left: var(--ui-margin);
+    cursor: pointer;
+    color: var(--accent-color);
+    font-size: 14px;
+    line-height: 15px;
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.4;
+    transition: opacity 0.1s, transform 0.1s;
+}
+
+.resetimage:hover {
+    opacity: 1;
+    color: #fff;
+    transform: rotate(-30deg);
+}
+
+.resetimage.modified {
+    opacity: 0.8;
+    color: #ffcc00; /* Yellowish to indicate change */
 }
 
 input[type=range].input-knob:focus,

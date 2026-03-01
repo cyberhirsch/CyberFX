@@ -15103,6 +15103,7 @@ class Tab {
   /* keeping track of frequently used dom elements */
   sliders = {};
   lock_buttons = {};
+  reset_buttons = {};
 
   synth = null;
 
@@ -15226,6 +15227,34 @@ class Tab {
       var header_paramtable = document.createElement("table");
       header_paramtable.classList.add("paramtable");
       centre_header.appendChild(header_paramtable);
+
+      // Global controls in header
+      var global_row = header_paramtable.insertRow();
+
+      var global_lock_cell = global_row.insertCell();
+      global_lock_cell.classList.add("lockcolumn");
+      var global_lock_btn = document.createElement("div");
+      global_lock_btn.classList.add("lockimage");
+      global_lock_btn.title = "Toggle ALL locks [L]";
+      global_lock_btn.addEventListener("click", () => this.toggle_all_locks());
+      global_lock_cell.appendChild(global_lock_btn);
+      this.global_lock_btn = global_lock_btn;
+
+      var global_reset_cell = global_row.insertCell();
+      global_reset_cell.classList.add("resetcolumn");
+      var global_reset_btn = document.createElement("div");
+      global_reset_btn.classList.add("resetimage");
+      global_reset_btn.title = "Reset all UNLOCKED parameters to default.";
+      global_reset_btn.innerHTML = "↺";
+      global_reset_btn.addEventListener("click", () => this.reset_all_unlocked());
+      global_reset_cell.appendChild(global_reset_btn);
+
+      var global_label_cell = global_row.insertCell();
+      global_label_cell.colSpan = 2;
+      global_label_cell.style.color = "var(--col-tan)";
+      global_label_cell.style.fontSize = "10px";
+      global_label_cell.style.paddingLeft = "5px";
+      global_label_cell.innerText = "GLOBAL CONTROLS";
 
       var centre_params = document.createElement("div");
       centre_params.classList.add("centre_params");
@@ -15354,19 +15383,37 @@ class Tab {
   /*********************/
 
   toggle_all_locks() {
-    //sets *all* parameters to locked or unlocked. use the first lock button to determine the state
     var lock_names = Object.keys(this.lock_buttons);
-    var first_locked = this.synth.locked_param(lock_names[0]);
-    var target_locked_state = !first_locked;
+    if (lock_names.length === 0) return;
+
+    // Check if at least one is unlocked
+    var any_unlocked = false;
+    for (let name of lock_names) {
+      if (!this.synth.locked_params[name]) {
+        any_unlocked = true;
+        break;
+      }
+    }
+
+    var target_locked_state = any_unlocked; // If any are unlocked, lock them all. Otherwise unlock all.
     for (let param_name in this.synth.locked_params) {
-      this.synth.set_locked_param(param_name, target_locked_state);
+      if (!this.synth.permalocked.includes(param_name)) {
+        this.synth.set_locked_param(param_name, target_locked_state);
+      }
     }
-    //set all permalocked params to the target locked state
-    for (let param_name in this.synth.permalocked) {
-      this.synth.set_locked_param(param_name, true);
-    }
+
     this.update_locks();
     SaveLoad.save_all_collections();
+  }
+
+  reset_all_unlocked() {
+    this.synth.reset_params(true);
+    this.files[this.selected_file_index][1] = JSON.stringify(this.synth.params);
+    this.update_ui_params();
+    this.update_ablements();
+    if (this.play_on_change) {
+      this.play_sound();
+    }
   }
 
   update_ui() {
@@ -15485,6 +15532,19 @@ class Tab {
             console.error("Unknown param type: " + param.type);
         }
       }
+
+      // Update reset button state
+      var param_name = (param.constructor === Array) ? param[2] : param.name;
+      var reset_button = this.reset_buttons[param_name];
+      if (reset_button) {
+        var current_val = this.synth.params[param_name];
+        var default_val = this.synth.param_default(param_name);
+        if (Math.abs(current_val - default_val) > 0.0001) {
+          reset_button.classList.add("modified");
+        } else {
+          reset_button.classList.remove("modified");
+        }
+      }
     }
   }
 
@@ -15499,6 +15559,22 @@ class Tab {
         lock_button.classList.remove("unlocked");
       } else {
         lock_button.classList.add("unlocked");
+      }
+    }
+
+    // Update global lock button
+    if (this.global_lock_btn) {
+      var any_unlocked = false;
+      for (var i = 0; i < keys.length; i++) {
+        if (!this.synth.locked_params[keys[i]]) {
+          any_unlocked = true;
+          break;
+        }
+      }
+      if (any_unlocked) {
+        this.global_lock_btn.classList.add("unlocked");
+      } else {
+        this.global_lock_btn.classList.remove("unlocked");
       }
     }
   }
@@ -15679,6 +15755,11 @@ class Tab {
     var lock_button = this.generate_lock_button(parameter_name);
     lock_cell.appendChild(lock_button);
 
+    var reset_cell = new_row.insertCell();
+    reset_cell.classList.add("resetcolumn");
+    var reset_button = this.generate_reset_button(parameter_name);
+    reset_cell.appendChild(reset_button);
+
     var rowspan = 1;
     if (display_name !== "") {
       var label_cell = new_row.insertCell();
@@ -15779,6 +15860,11 @@ class Tab {
     var lock_button = this.generate_lock_button(parameter_name);
     lock_cell.appendChild(lock_button);
 
+    var reset_cell = new_row.insertCell();
+    reset_cell.classList.add("resetcolumn");
+    var reset_button = this.generate_reset_button(parameter_name);
+    reset_cell.appendChild(reset_button);
+
     var rowspan = 1;
     if (display_name !== "") {
       var label_cell = new_row.insertCell();
@@ -15834,6 +15920,11 @@ class Tab {
     var lock_button = this.generate_lock_button(parameter_name);
     lock_cell.appendChild(lock_button);
 
+    var reset_cell = new_row.insertCell();
+    reset_cell.classList.add("resetcolumn");
+    var reset_button = this.generate_reset_button(parameter_name);
+    reset_cell.appendChild(reset_button);
+
     var rowspan = 1;
     if (display_name !== "") {
       var label_cell = new_row.insertCell();
@@ -15867,6 +15958,29 @@ class Tab {
     //add param-name as data attribute
     this.lock_buttons[parameter_name] = lock_button;
     return lock_button;
+  }
+
+  generate_reset_button(parameter_name) {
+    var reset_button = document.createElement("div");
+    reset_button.classList.add("resetimage");
+    reset_button.title = "Reset parameter to default value.";
+    reset_button.innerHTML = "↺";
+    reset_button.addEventListener("click", () => {
+      this.reset_param_clicked(parameter_name);
+    });
+    this.reset_buttons[parameter_name] = reset_button;
+    return reset_button;
+  }
+
+  reset_param_clicked(parameter_name) {
+    var default_val = this.synth.param_default(parameter_name);
+    this.synth.set_param(parameter_name, default_val);
+    this.files[this.selected_file_index][1] = JSON.stringify(this.synth.params);
+    this.update_ui_params();
+    this.update_ablements();
+    if (this.play_on_change) {
+      this.play_sound();
+    }
   }
 
 
@@ -16526,6 +16640,26 @@ class Tab {
             gobbled = true;
           }
           break;
+        case "R":
+          if (!mod_key) {
+            this.synth.randomize_params();
+            this.files[this.selected_file_index][1] = JSON.stringify(this.synth.params);
+            this.update_ui_params();
+            this.update_ablements();
+            this.play_sound();
+            gobbled = true;
+          }
+          break;
+        case "M":
+          if (!mod_key) {
+            this.synth.mutate_params();
+            this.files[this.selected_file_index][1] = JSON.stringify(this.synth.params);
+            this.update_ui_params();
+            this.update_ablements();
+            this.play_sound();
+            gobbled = true;
+          }
+          break;
         case "ENTER":
         case "NUMPADENTER":
         case " ":
@@ -16637,11 +16771,76 @@ class Tab {
     var file_name = data.file_name;
     var params = data.params;
 
-    var tab = tabs.find(tab => tab.synth.name == synth_name);
+    const activeTab = tabs.find(t => t.active);
+    const synthNameLower = (synth_name || "").toLowerCase();
+
+    // Find the specific tab for this synth type, if any
+    var tab = tabs.find(tab => tab.synth.name.toLowerCase() === synthNameLower);
+
+    // Override: If the active tab is CyberFX and we're importing BFXR or ZzFX data, force staying on CyberFX.
+    const isActiveCyberFX = activeTab && activeTab.synth.name === "CyberFX";
+    const isBfxrSource = synthNameLower === "bfxr" || (data.params && data.params.attackTime !== undefined);
+    const isZzfxSource = synthNameLower === "zzfx";
+
+    if (isActiveCyberFX && (isBfxrSource || isZzfxSource)) {
+      tab = activeTab;
+
+      // Perform translation for CyberFX
+      if (isBfxrSource) {
+        const bfxr = data.params || data;
+        const res = tab.synth.default_params();
+        const waveMap = { 0: 5, 1: 2, 2: 0, 3: 4, 4: 1, 6: 3, 7: 8, 8: 9, 9: 7 };
+        res.shape = waveMap[bfxr.waveType] ?? 0;
+        res.attack = (bfxr.attackTime ** 2 * 100000) / 44100;
+        res.sustain = (bfxr.sustainTime ** 2 * 100000) / 44100;
+        res.decay = (bfxr.decayTime ** 2 * 100000 + 10) / 44100;
+        res.release = 0.1;
+        res.frequency = 44100 * (bfxr.frequency_start ** 2 + 0.001) / 100;
+        res.slide = bfxr.frequency_slide * 10;
+        res.deltaSlide = bfxr.frequency_acceleration * 10;
+        res.pitchJump = bfxr.pitch_jump_amount * 100;
+        res.pitchJumpTime = bfxr.pitch_jump_onset_percent;
+        res.vibratoDepth = bfxr.vibratoDepth;
+        res.vibratoSpeed = bfxr.vibratoSpeed;
+        res.shapeCurve = bfxr.squareDuty * 2;
+        res.dutySweep = bfxr.dutySweep;
+        if (bfxr.lpFilterCutoff < 1.0) res.filter = bfxr.lpFilterCutoff;
+        else if (bfxr.hpFilterCutoff > 0.0) res.filter = -bfxr.hpFilterCutoff;
+        res.lpFilterCutoffSweep = bfxr.lpFilterCutoffSweep;
+        res.lpFilterResonance = bfxr.lpFilterResonance;
+        res.bitCrush = bfxr.bitCrush;
+        res.bitCrushSweep = bfxr.bitCrushSweep;
+        res.sustainPunch = bfxr.sustainPunch;
+        res.compressionAmount = bfxr.compressionAmount;
+        res.overtones = bfxr.overtones;
+        res.overtoneFalloff = bfxr.overtoneFalloff;
+        res.flangerOffset = bfxr.flangerOffset;
+        res.flangerSweep = bfxr.flangerSweep;
+        data.params = res; // Set converted params
+        data.synth_type = "CyberFX"; // Masquerade as CyberFX
+      } else if (isZzfxSource) {
+        const zzfxParams = Array.isArray(data.params) ? data.params : null;
+        const res = tab.synth.default_params();
+        if (zzfxParams) {
+          ZzFX.PARAM_ORDER.forEach((k, i) => { if (res.hasOwnProperty(k)) res[k] = zzfxParams[i]; });
+        } else {
+          Object.assign(res, data.params);
+        }
+        data.params = res;
+        data.synth_type = "CyberFX";
+      }
+    }
+
     if (!tab) {
-      console.error("No tab found for synth_name: " + synth_name);
+      // Final fallback to active tab if no match found
+      tab = activeTab;
+    }
+
+    if (!tab) {
+      console.error("No tab found and no active tab for synth_name: " + synth_name);
       return;
     }
+
     // Let the synth convert its file format to a params dict (e.g. ZzFX array → dict)
     if (tab.synth.deserialize_params) {
       params = tab.synth.deserialize_params(data);

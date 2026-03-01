@@ -334,6 +334,8 @@ class CyberFX extends SynthBase {
             });
             return result;
         }
-        return data.params;
+
+        // Native CyberFX or fallback
+        return data.params || data;
     }
 }
