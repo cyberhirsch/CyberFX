@@ -15,7 +15,7 @@ CyberFX is a powerful, lightweight parametric sound effect generator designed fo
 This project stands on the shoulders of giants. Special thanks to:
 
 - **Frank Force (KilledByAPixel)**: For the brilliant [ZzFX](https://github.com/KilledByAPixel/ZzFX) DSP architecture and original implementation.
-- **Stephen Lavelle (Incredible Ape)**: For the creation of [Bfxr](https://www.bfxr.net/), which inspired much of the feature set.
+- **Stephen Lavelle (increpare / Incredible Ape)**: For the creation of [Bfxr](https://www.bfxr.net/) and [Bfxr2](https://github.com/increpare/bfxr2), which inspired much of the project's feature set.
 - **Tomas Pettersson (DrPetter)**: For the original [Sfxr](http://www.drpetter.se/project_sfxr.html), the progenitor of parametric sound generators.
 
 ## License
