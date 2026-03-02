@@ -118,7 +118,7 @@ class CyberFX extends SynthBase {
             filter = p.filter,
             sustainPunch = p.sustainPunch,
             compressionAmount = p.compressionAmount,
-            minFrequency = p.min_frequency_relative_to_starting_frequency * 1000,
+            minFrequency = p.min_frequency_relative_to_starting_frequency,
             vibratoDepth = p.vibratoDepth,
             vibratoSpeed = p.vibratoSpeed * p.vibratoSpeed * 0.01,
             overtones = p.overtones * 10,
@@ -162,6 +162,9 @@ class CyberFX extends SynthBase {
             b1 = -(sign(filter) + cos) / a0,
             b2 = b0,
             x2 = 0, x1 = 0, y2 = 0, y1 = 0;
+
+        // Convert minFrequency from 0-1 relative fraction to actual rad/sample threshold
+        if (minFrequency > 0) minFrequency *= startFrequency;
 
         attack = attack * sampleRate || 9;
         decay *= sampleRate;
@@ -312,6 +315,7 @@ class CyberFX extends SynthBase {
         }
 
         const buffer = new Float32Array(b);
+        if (buffer.length === 0) return;
         this.sound = RealizedSound.from_buffer(buffer);
     }
 
