@@ -264,18 +264,28 @@ Bfxr.prototype.mutate_params = function () {
 };
 
 // Editor extensions for CyberFX — template generators, randomizer, mutator.
-// Based on ZzFX by Frank Force.
 
 CyberFX.prototype.templates = [
-  ["Pickup/Coin", "Blips and beeps.", "cyberfx_generate_pickup", "Pickup"],
-  ["Laser/Shoot", "Pew pew.", "cyberfx_generate_laser", "Shoot"],
-  ["Explosion", "Boom.", "cyberfx_generate_explosion", "Boom"],
-  ["Hit/Hurt", "Ouch.", "cyberfx_generate_hit", "Hit"],
-  ["Jump", "Boing.", "cyberfx_generate_jump", "Jump"],
-  ["Blip/Select", "Bip.", "cyberfx_generate_blip", "Blip"],
-  ["Alert", "Red alert!", "cyberfx_generate_alert", "Alert"],
+  // --- Original CyberFX generators ---
+  ["Pickup/Coin",  "Blips and beeps.",        "cyberfx_generate_pickup",   "Pickup"],
+  ["Laser/Shoot",  "Pew pew.",                "cyberfx_generate_laser",    "Shoot"],
+  ["Explosion",    "Boom.",                   "cyberfx_generate_explosion", "Boom"],
+  ["Hit/Hurt",     "Ouch.",                   "cyberfx_generate_hit",      "Hit"],
+  ["Jump",         "Boing.",                  "cyberfx_generate_jump",     "Jump"],
+  ["Blip/Select",  "Bip.",                    "cyberfx_generate_blip",     "Blip"],
+  ["Alert",        "Red alert!",              "cyberfx_generate_alert",    "Alert"],
+  // --- Bfxr-ported generators ---
+  ["Bfxr: Pickup",    "Pickup/coin, Bfxr style.",   "cyberfx_bfxr_pickup",    "BPickup"],
+  ["Bfxr: Laser",     "Laser/shoot, Bfxr style.",   "cyberfx_bfxr_laser",     "BLaser"],
+  ["Bfxr: Explosion", "Explosion, Bfxr style.",     "cyberfx_bfxr_explosion", "BExplode"],
+  ["Bfxr: Powerup",   "Whoo!",                      "cyberfx_bfxr_powerup",   "BPowerup"],
+  ["Bfxr: Hit",       "Hit/hurt, Bfxr style.",      "cyberfx_bfxr_hit",       "BHit"],
+  ["Bfxr: Jump",      "Jump, Bfxr style.",           "cyberfx_bfxr_jump",      "BJump"],
+  ["Bfxr: Blip",      "Blip/select, Bfxr style.",   "cyberfx_bfxr_blip",      "BBlip"],
+  ["Bfxr: Alert",     "Alert, Bfxr style.",          "cyberfx_bfxr_alert",     "BAlert"],
+  // --- Randomize / Mutate ---
   ["Randomize", "Taking your life into your hands...", "randomize_params", "Random"],
-  ["Mutate", "Modify each parameter by a small amount.", "mutate_params", "Mutant"],
+  ["Mutate",    "Modify each parameter by a small amount.", "mutate_params", "Mutant"],
 ];
 
 // --- helpers ---
@@ -288,7 +298,29 @@ CyberFX.prototype._cyberfx_reset = function () {
   this.reset_params(true);
 };
 
-// --- template generators ---
+// Convert Bfxr frequency_start (0..1) → CyberFX frequency in Hz.
+// Matches SaveLoad.js: 44100 * (fs² + 0.001) / 100
+CyberFX.prototype._cyberfx_bfxr_freq = function (fs) {
+  return 44100 * (fs * fs + 0.001) / 100;
+};
+
+// Convert Bfxr sustainTime (0..1) → CyberFX decay (seconds) — the flat+punch stage.
+CyberFX.prototype._cyberfx_bfxr_decay = function (st) {
+  return (st * st * 100000) / 44100;
+};
+
+// Convert Bfxr decayTime (0..1) → CyberFX sustain (seconds) — the fade-to-zero stage.
+CyberFX.prototype._cyberfx_bfxr_sustain = function (dt) {
+  return (dt * dt * 100000 + 10) / 44100;
+};
+
+// Convert Bfxr repeatSpeed (0..1) → CyberFX repeatTime (seconds).
+CyberFX.prototype._cyberfx_bfxr_repeat = function (rs) {
+  if (rs <= 0) return 0;
+  return ((1 - rs) * (1 - rs) * 20000 + 32) / 44100;
+};
+
+// --- Original CyberFX generators (param ranges corrected for Bfxr-compatible DSP) ---
 
 CyberFX.prototype.cyberfx_generate_pickup = function () {
   this._cyberfx_reset();
@@ -299,10 +331,10 @@ CyberFX.prototype.cyberfx_generate_pickup = function () {
   this.set_param("release", this._cyberfx_rnd(0.1, 0.4), true);
   this.set_param("sustainVolume", 1, true);
   if (Math.random() < 0.5) {
-    this.set_param("slide", this._cyberfx_rnd(0.5, 3), true);
+    this.set_param("slide", this._cyberfx_rnd(0.05, 0.3), true);
   }
   if (Math.random() < 0.4) {
-    this.set_param("pitchJump", this._cyberfx_rnd(50, 200), true);
+    this.set_param("pitchJump", this._cyberfx_rnd(0.2, 0.7), true);
     this.set_param("pitchJumpTime", this._cyberfx_rnd(0.05, 0.2), true);
   }
 };
@@ -311,12 +343,12 @@ CyberFX.prototype.cyberfx_generate_laser = function () {
   this._cyberfx_reset();
   this.set_param("shape", Math.floor(Math.random() * 3), true); // sin/triangle/saw
   this.set_param("frequency", this._cyberfx_rnd(200, 900), true);
-  this.set_param("slide", this._cyberfx_rnd(-8, -1), true);
+  this.set_param("slide", this._cyberfx_rnd(-0.5, -0.1), true);
   this.set_param("attack", 0, true);
   this.set_param("sustain", this._cyberfx_rnd(0, 0.1), true);
   this.set_param("release", this._cyberfx_rnd(0.05, 0.3), true);
   if (Math.random() < 0.4) {
-    this.set_param("deltaSlide", this._cyberfx_rnd(-3, 0), true);
+    this.set_param("deltaSlide", this._cyberfx_rnd(-0.1, 0), true);
   }
   if (Math.random() < 0.3) {
     this.set_param("bitCrush", this._cyberfx_rnd(0, 0.3), true);
@@ -331,7 +363,7 @@ CyberFX.prototype.cyberfx_generate_explosion = function () {
   this.set_param("sustain", this._cyberfx_rnd(0.05, 0.2), true);
   this.set_param("release", this._cyberfx_rnd(0.2, 0.6), true);
   this.set_param("sustainVolume", this._cyberfx_rnd(0.4, 0.8), true);
-  this.set_param("slide", this._cyberfx_rnd(-3, 0), true);
+  this.set_param("slide", this._cyberfx_rnd(-0.2, 0), true);
   if (Math.random() < 0.5) {
     this.set_param("noise", this._cyberfx_rnd(0.3, 1), true);
   }
@@ -347,7 +379,7 @@ CyberFX.prototype.cyberfx_generate_hit = function () {
   this._cyberfx_reset();
   this.set_param("shape", Math.random() < 0.5 ? 4 : 3, true); // noise or tan
   this.set_param("frequency", this._cyberfx_rnd(100, 500), true);
-  this.set_param("slide", this._cyberfx_rnd(-5, -1), true);
+  this.set_param("slide", this._cyberfx_rnd(-0.5, -0.1), true);
   this.set_param("attack", 0, true);
   this.set_param("sustain", this._cyberfx_rnd(0, 0.05), true);
   this.set_param("release", this._cyberfx_rnd(0.05, 0.25), true);
@@ -363,7 +395,7 @@ CyberFX.prototype.cyberfx_generate_jump = function () {
   this._cyberfx_reset();
   this.set_param("shape", Math.random() < 0.5 ? 0 : 1, true); // sin or triangle
   this.set_param("frequency", this._cyberfx_rnd(200, 500), true);
-  this.set_param("slide", this._cyberfx_rnd(1, 5), true);
+  this.set_param("slide", this._cyberfx_rnd(0.1, 0.35), true);
   this.set_param("attack", 0, true);
   this.set_param("sustain", this._cyberfx_rnd(0.05, 0.2), true);
   this.set_param("release", this._cyberfx_rnd(0.1, 0.3), true);
@@ -383,11 +415,11 @@ CyberFX.prototype.cyberfx_generate_alert = function () {
   this.set_param("sustain", this._cyberfx_rnd(0.3, 0.55), true);
   this.set_param("release", this._cyberfx_rnd(0.03, 0.08), true);
   this.set_param("sustainVolume", this._cyberfx_rnd(0.7, 1.0), true);
-  this.set_param("slide", this._cyberfx_rnd(-6, -3), true); // pitch drops fast
-  this.set_param("repeatTime", this._cyberfx_rnd(0.15, 0.25), true); // cycling klaxon repeat
-  this.set_param("tremolo", this._cyberfx_rnd(0.1, 0.35), true); // pulsing amplitude
+  this.set_param("slide", this._cyberfx_rnd(-0.5, -0.3), true);
+  this.set_param("repeatTime", this._cyberfx_rnd(0.15, 0.25), true);
+  this.set_param("tremolo", this._cyberfx_rnd(0.1, 0.35), true);
   if (Math.random() < 0.4) {
-    this.set_param("deltaSlide", this._cyberfx_rnd(-1.5, 0), true); // accelerating drop
+    this.set_param("deltaSlide", this._cyberfx_rnd(-0.05, 0), true);
   }
 };
 
@@ -399,6 +431,185 @@ CyberFX.prototype.cyberfx_generate_blip = function () {
   this.set_param("sustain", this._cyberfx_rnd(0.02, 0.08), true);
   this.set_param("release", this._cyberfx_rnd(0.02, 0.12), true);
   this.set_param("filter", this._cyberfx_rnd(-0.3, 0), true); // slight high-pass
+};
+
+// --- Bfxr-ported generators ---
+// Exact port of Bfxr's generator logic using CyberFX param space.
+// Frequencies use _cyberfx_bfxr_freq; envelopes use _cyberfx_bfxr_decay/_sustain.
+
+CyberFX.prototype.cyberfx_bfxr_pickup = function () {
+  this._cyberfx_reset();
+  this.set_param("shape", 5, true); // Square (Bfxr default waveType=0)
+  const fs = 0.4 + Math.random() * 0.5;
+  this.set_param("frequency", this._cyberfx_bfxr_freq(fs), true);
+  this.set_param("decay",   this._cyberfx_bfxr_decay(Math.random() * 0.1), true);
+  this.set_param("sustain", this._cyberfx_bfxr_sustain(0.1 + Math.random() * 0.4), true);
+  this.set_param("sustainPunch", 0.3 + Math.random() * 0.3, true);
+  if (Math.random() < 0.5) {
+    this.set_param("pitchJumpTime", 0.5 + Math.random() * 0.2, true);
+    const cnum = Math.floor(Math.random() * 7) + 1;
+    const cden = Math.floor(Math.random() * 7) + cnum + 2;
+    this.set_param("pitchJump", cnum / cden, true);
+  }
+};
+
+CyberFX.prototype.cyberfx_bfxr_laser = function () {
+  this._cyberfx_reset();
+  // waveType 0→Square(5), 1→Saw(2), 2→Sin(0); Bfxr may re-roll if waveType==2
+  let wtIdx = (Math.random() * 3) | 0;
+  if (wtIdx === 2 && Math.random() < 0.5) wtIdx = (Math.random() * 2) | 0;
+  const bfxrWave = [5, 2, 0];
+  this.set_param("shape", bfxrWave[wtIdx], true);
+  let fs;
+  if (Math.random() < 0.33) {
+    fs = 0.1 + Math.random() * 0.5;
+    this.set_param("min_frequency_relative_to_starting_frequency", Math.random() * 0.1, true);
+    this.set_param("slide", -0.35 - Math.random() * 0.3, true);
+  } else {
+    fs = 0.5 + Math.random() * 0.5;
+    let minF = fs - 0.2 - Math.random() * 0.6;
+    if (minF < 0.2) minF = 0.2;
+    this.set_param("min_frequency_relative_to_starting_frequency", minF, true);
+    this.set_param("slide", -0.15 - Math.random() * 0.2, true);
+  }
+  if (fs < 0.15) {
+    this.set_param("min_frequency_relative_to_starting_frequency", 0, true);
+    this.set_param("slide", -0.1 - Math.random() * 0.1, true);
+  }
+  this.set_param("frequency", this._cyberfx_bfxr_freq(fs), true);
+  if (Math.random() < 0.5) {
+    this.set_param("shapeCurve", Math.random() * 0.5 * 2, true); // squareDuty * 2
+    this.set_param("dutySweep",  Math.random() * 0.2, true);
+  } else {
+    this.set_param("shapeCurve", (0.4 + Math.random() * 0.5) * 2, true);
+    this.set_param("dutySweep", -Math.random() * 0.7, true);
+  }
+  this.set_param("decay",   this._cyberfx_bfxr_decay(0.1 + Math.random() * 0.2), true);
+  this.set_param("sustain", this._cyberfx_bfxr_sustain(Math.random() * 0.4), true);
+  if (Math.random() < 0.5)  this.set_param("sustainPunch", Math.random() * 0.3, true);
+  if (Math.random() < 0.33) {
+    this.set_param("flangerOffset", Math.random() * 0.2, true);
+    this.set_param("flangerSweep", -Math.random() * 0.2, true);
+  }
+  if (Math.random() < 0.5) this.set_param("filter", -(Math.random() * 0.3), true);
+};
+
+CyberFX.prototype.cyberfx_bfxr_explosion = function () {
+  this._cyberfx_reset();
+  this.set_param("shape", Math.random() < 0.5 ? 4 : 7, true); // Noise(4) or Bitnoise(7)
+  let fs;
+  if (Math.random() < 0.5) {
+    fs = 0.1 + Math.random() * 0.4;
+    this.set_param("slide", -0.1 + Math.random() * 0.4, true);
+  } else {
+    fs = 0.2 + Math.random() * 0.7;
+    this.set_param("slide", -0.2 - Math.random() * 0.2, true);
+  }
+  fs = fs * fs; // Bfxr squares frequency_start
+  if (Math.random() < 0.2) this.set_param("slide", 0, true);
+  this.set_param("frequency", this._cyberfx_bfxr_freq(fs), true);
+  if (Math.random() < 0.33) {
+    this.set_param("repeatTime", this._cyberfx_bfxr_repeat(0.3 + Math.random() * 0.5), true);
+  }
+  this.set_param("decay",   this._cyberfx_bfxr_decay(0.1 + Math.random() * 0.3), true);
+  this.set_param("sustain", this._cyberfx_bfxr_sustain(Math.random() * 0.5), true);
+  this.set_param("sustainPunch", 0.2 + Math.random() * 0.6, true);
+  if (Math.random() < 0.5) {
+    this.set_param("flangerOffset", -0.3 + Math.random() * 0.9, true);
+    this.set_param("flangerSweep", -Math.random() * 0.3, true);
+  }
+  if (Math.random() < 0.33) {
+    this.set_param("pitchJumpTime", 0.6 + Math.random() * 0.3, true);
+    this.set_param("pitchJump",     0.8 - Math.random() * 1.6, true);
+  }
+};
+
+CyberFX.prototype.cyberfx_bfxr_powerup = function () {
+  this._cyberfx_reset();
+  if (Math.random() < 0.5) {
+    this.set_param("shape", 2, true); // Saw
+  } else {
+    this.set_param("shape", 5, true); // Square
+    this.set_param("shapeCurve", Math.random() * 0.6 * 2, true); // squareDuty * 2
+  }
+  const fs = 0.2 + Math.random() * 0.3;
+  this.set_param("frequency", this._cyberfx_bfxr_freq(fs), true);
+  if (Math.random() < 0.5) {
+    this.set_param("slide", 0.1 + Math.random() * 0.4, true);
+    this.set_param("repeatTime", this._cyberfx_bfxr_repeat(0.4 + Math.random() * 0.4), true);
+  } else {
+    this.set_param("slide", 0.05 + Math.random() * 0.2, true);
+    if (Math.random() < 0.5) {
+      this.set_param("vibratoDepth", Math.random() * 0.7, true);
+      this.set_param("vibratoSpeed", Math.random() * 0.6, true);
+    }
+  }
+  this.set_param("decay",   this._cyberfx_bfxr_decay(Math.random() * 0.4), true);
+  this.set_param("sustain", this._cyberfx_bfxr_sustain(0.1 + Math.random() * 0.4), true);
+};
+
+CyberFX.prototype.cyberfx_bfxr_hit = function () {
+  this._cyberfx_reset();
+  // Bfxr: White(3)→4, Bitnoise(9)→7, Saw(1)→2, Square(0)→5, Voice(11)→Sin(0)
+  const hitShapes = [4, 7, 2, 5, 0];
+  const shape = hitShapes[Math.floor(Math.random() * hitShapes.length)];
+  this.set_param("shape", shape, true);
+  if (shape === 5) this.set_param("shapeCurve", Math.random() * 0.6 * 2, true);
+  const fs = 0.2 + Math.random() * 0.6;
+  this.set_param("frequency", this._cyberfx_bfxr_freq(fs), true);
+  this.set_param("slide",   -0.3 - Math.random() * 0.4, true);
+  this.set_param("decay",   this._cyberfx_bfxr_decay(Math.random() * 0.1), true);
+  this.set_param("sustain", this._cyberfx_bfxr_sustain(0.1 + Math.random() * 0.2), true);
+  if (Math.random() < 0.5) this.set_param("filter", -(Math.random() * 0.3), true);
+};
+
+CyberFX.prototype.cyberfx_bfxr_jump = function () {
+  this._cyberfx_reset();
+  // Bfxr: Square(0)→5, Saw(1)→2, FMSyn(10)→Sin(0)
+  const jumpShapes = [5, 2, 0];
+  const shape = jumpShapes[Math.floor(Math.random() * jumpShapes.length)];
+  this.set_param("shape", shape, true);
+  this.set_param("shapeCurve", Math.random() * 0.6 * 2, true); // squareDuty * 2
+  const fs = 0.3 + Math.random() * 0.3;
+  this.set_param("frequency", this._cyberfx_bfxr_freq(fs), true);
+  this.set_param("slide",   0.1 + Math.random() * 0.2, true);
+  this.set_param("decay",   this._cyberfx_bfxr_decay(0.1 + Math.random() * 0.3), true);
+  this.set_param("sustain", this._cyberfx_bfxr_sustain(0.1 + Math.random() * 0.2), true);
+  if (Math.random() < 0.5) {
+    this.set_param("filter", -(Math.random() * 0.3), true);      // HP filter
+  } else if (Math.random() < 0.5) {
+    this.set_param("filter", 1.0 - Math.random() * 0.6, true);   // LP filter
+  }
+};
+
+CyberFX.prototype.cyberfx_bfxr_blip = function () {
+  this._cyberfx_reset();
+  // Bfxr: Square(0)→5, Saw(1)→2, FMSyn(10)→Sin(0), Whistle(7)→8
+  const blipShapes = [5, 2, 0, 8];
+  const shape = blipShapes[Math.floor(Math.random() * blipShapes.length)];
+  this.set_param("shape", shape, true);
+  if (shape === 5) this.set_param("shapeCurve", Math.random() * 0.6 * 2, true);
+  const fs = 0.2 + Math.random() * 0.4;
+  this.set_param("frequency", this._cyberfx_bfxr_freq(fs), true);
+  this.set_param("decay",   this._cyberfx_bfxr_decay(0.1 + Math.random() * 0.1), true);
+  this.set_param("sustain", this._cyberfx_bfxr_sustain(Math.random() * 0.2), true);
+  this.set_param("filter",  -0.1, true); // hpFilterCutoff = 0.1
+};
+
+CyberFX.prototype.cyberfx_bfxr_alert = function () {
+  this._cyberfx_reset();
+  this.set_param("shape", 2, true); // Saw (Bfxr waveType=1)
+  const fs = 0.5 + Math.random() * 0.2;
+  this.set_param("frequency",   this._cyberfx_bfxr_freq(fs), true);
+  this.set_param("slide",       -(0.3 + Math.random() * 0.2), true);
+  this.set_param("repeatTime",  this._cyberfx_bfxr_repeat(0.6 + Math.random() * 0.2), true);
+  this.set_param("decay",       this._cyberfx_bfxr_decay(0.25 + Math.random() * 0.2), true);
+  this.set_param("sustain",     this._cyberfx_bfxr_sustain(0.05 + Math.random() * 0.1), true);
+  this.set_param("sustainPunch", 0.2 + Math.random() * 0.3, true);
+  if (Math.random() < 0.4) {
+    this.set_param("flangerOffset", Math.random() * 0.15, true);
+    this.set_param("flangerSweep", -Math.random() * 0.1, true);
+  }
 };
 // Editor extensions for ZzFX — template generators, randomizer, mutator.
 

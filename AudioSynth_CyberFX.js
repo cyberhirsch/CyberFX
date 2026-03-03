@@ -54,17 +54,17 @@ class CyberFX extends SynthBase {
         ["Randomness", "Random pitch variation applied each time the sound plays.", "randomness", 0.05, 0, 0.5],
         ["Frequency", "Base frequency in Hz.", "frequency", 220, 20, 4400],
         ["Attack", "Volume attack duration in seconds.", "attack", 0, 0, 2],
-        ["Decay", "Volume decay duration in seconds.", "decay", 0, 0, 2],
-        ["Sustain", "Volume sustain duration in seconds.", "sustain", 0.3, 0, 2],
+        ["Decay", "Volume decay duration in seconds (Bfxr sustain stage).", "decay", 0, 0, 2],
+        ["Sustain", "Volume sustain duration in seconds (Bfxr decay/fade stage).", "sustain", 0.3, 0, 2],
         ["Punch", "Tilts the sustain envelope for more 'pop'.", "sustainPunch", 0, 0, 1],
-        ["Release", "Volume release duration in seconds.", "release", 0.4, 0, 2],
-        ["Sustain Vol", "Volume level during the sustain phase.", "sustainVolume", 1, 0, 1],
+        ["Release", "Volume release tail after decay.", "release", 0.4, 0, 2],
+        ["Sustain Vol", "Volume level during the release tail.", "sustainVolume", 1, 0, 1],
         ["Shape Curve / Square Duty", "Applies a power curve to the wave. For Sq Duty: controls duty cycle.", "shapeCurve", 1, 0, 3],
         ["Duty Sweep", "Square waveform only: Sweeps the duty up or down.", "dutySweep", 0, -1, 1],
-        ["Frequency Slide", "Frequency slide rate.", "slide", 0, -10, 10],
-        ["Delta Slide", "Accelerates the frequency slide.", "deltaSlide", 0, -10, 10],
+        ["Frequency Slide", "Frequency slide rate.", "slide", 0, -1, 1],
+        ["Delta Slide", "Accelerates the frequency slide.", "deltaSlide", 0, -1, 1],
         ["Frequency Cutoff", "Sound will stop if frequency drops below this value.", "min_frequency_relative_to_starting_frequency", 0, 0, 1],
-        ["Pitch Jump", "Sudden pitch jump amount.", "pitchJump", 0, -1000, 1000],
+        ["Pitch Jump", "Sudden pitch jump amount.", "pitchJump", 0, -1, 1],
         ["Jump Time", "Delay before the pitch jump fires.", "pitchJumpTime", 0, 0, 1],
         ["Repeat Time", "Envelope repeat period. 0 = no repeat.", "repeatTime", 0, 0, 1],
         ["Vibrato Depth", "Strength of the vibrato effect.", "vibratoDepth", 0, 0, 1],
@@ -79,7 +79,7 @@ class CyberFX extends SynthBase {
         ["Flanger Sweep", "Sweeps the flanger offset.", "flangerSweep", 0, -1, 1],
         ["Delay", "Echo delay duration in seconds.", "delay", 0, 0, 1],
         ["Tremolo", "Amplitude tremolo depth.", "tremolo", 0, 0, 1],
-        ["Filter", "Biquad filter. Positive = low-pass, negative = high-pass.", "filter", 0, -1, 1],
+        ["Filter", "Low/High-pass filter. Positive = low-pass, negative = high-pass.", "filter", 0, -1, 1],
         ["Filter Sweep", "Sweeps the filter frequency.", "lpFilterCutoffSweep", 0, -1, 1],
         ["Filter Resonance", "Changes the attenuation rate for the filter.", "lpFilterResonance", 0, 0, 1],
         ["Compression", "Pushes amplitudes together into a narrower range.", "compressionAmount", 0, 0, 1],
@@ -91,227 +91,322 @@ class CyberFX extends SynthBase {
     }
 
     generate_sound() {
-        // CyberFX DSP — adapted from ZzFX by Frank Force (MIT License)
+        // CyberFX DSP — ported to match Bfxr's formulas exactly for all shared parameters.
+        // Period-based oscillator with 8× supersampling, multiplicative slide, Bfxr one-pole
+        // filter, state-based flanger, and Bfxr sample-and-hold bit crush.
         const p = this.params;
-        const sampleRate = SAMPLE_RATE;
-
-        let volume = p.masterVolume,
-            randomness = p.randomness,
-            frequency = p.frequency,
-            attack = p.attack,
-            sustain = p.sustain,
-            release = p.release,
-            shape = p.shape | 0,
-            shapeCurve = p.shapeCurve,
-            slide = p.slide,
-            deltaSlide = p.deltaSlide,
-            pitchJump = p.pitchJump,
-            pitchJumpTime = p.pitchJumpTime,
-            repeatTime = p.repeatTime,
-            noise = p.noise,
-            modulation = p.modulation,
-            bitCrush = p.bitCrush,
-            delay = p.delay,
-            sustainVolume = p.sustainVolume,
-            decay = p.decay,
-            tremolo = p.tremolo,
-            filter = p.filter,
-            sustainPunch = p.sustainPunch,
-            compressionAmount = p.compressionAmount,
-            minFrequency = p.min_frequency_relative_to_starting_frequency,
-            vibratoDepth = p.vibratoDepth,
-            vibratoSpeed = p.vibratoSpeed * p.vibratoSpeed * 0.01,
-            overtones = p.overtones * 10,
-            overtoneFalloff = p.overtoneFalloff,
-            dutySweep = p.dutySweep * 0.00005,
-            flangerOffset = p.flangerOffset * p.flangerOffset * 1020 * (p.flangerOffset < 0 ? -1 : 1),
-            flangerSweep = p.flangerSweep * p.flangerSweep * p.flangerSweep * 0.2,
-            filterSweep = 1.0 + p.lpFilterCutoffSweep * 0.0003,
-            filterRes = p.lpFilterResonance,
-            bitCrushSweep = p.bitCrushSweep;
-
+        const SR = SAMPLE_RATE;
         const PI2 = Math.PI * 2;
         const abs = Math.abs;
-        const sign = v => v < 0 ? -1 : 1;
+        const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
 
-        // Prevent divide-by-zero in delay feedback formula
-        const safeVolume = volume || 1e-9;
+        // === FREQUENCY → PERIOD (samples per cycle, like Bfxr) ===
+        const startFreq = p.frequency * (1 + p.randomness * 2 * Math.random() - p.randomness);
+        let period = SR / startFreq;
+        const startPeriod = period;
 
-        let startSlide = slide *= 500 * PI2 / sampleRate / sampleRate,
-            startFrequency = frequency *= (1 + randomness * 2 * Math.random() - randomness) * PI2 / sampleRate,
-            modOffset = 0,
-            repeat = 0,
-            crush = 0,
-            jump = 1,
-            bitnoiseState = 1 << 14,
-            length,
-            b = [],
-            t = 0,
-            i = 0,
-            s = 0,
-            f,
+        // === SLIDE — multiplicative, Bfxr formula ===
+        // p.slide range -1..1 matches Bfxr frequency_slide
+        let slideRate = 1.0 - p.slide * p.slide * p.slide * 0.01;
+        const startSlideRate = slideRate;
+        const deltaSlideAccel = -p.deltaSlide * p.deltaSlide * p.deltaSlide * 0.000001;
 
-            quality = 2,
-            w = Math.PI * abs(filter),
-            cos = Math.cos(w),
-            alpha = Math.sin(w) / 2 / quality,
-            a0 = 1 + alpha,
-            a1 = -2 * cos / a0,
-            a2 = (1 - alpha) / a0,
-            b0 = (1 + sign(filter) * cos) / 2 / a0,
-            b1 = -(sign(filter) + cos) / a0,
-            b2 = b0,
-            x2 = 0, x1 = 0, y2 = 0, y1 = 0;
+        // === MIN FREQUENCY — Bfxr power-law (period grows → freq drops below min → mute) ===
+        const mfParam = p.min_frequency_relative_to_starting_frequency;
+        const maxPeriod = mfParam > 0 ? SR / (Math.pow(mfParam, 0.4) * startFreq) : Infinity;
 
-        // Convert minFrequency from 0-1 relative fraction to actual rad/sample threshold
-        if (minFrequency > 0) minFrequency *= startFrequency;
+        // === VIBRATO — Bfxr formula (no PI2 on sin argument) ===
+        const vibratoSpeed     = p.vibratoSpeed * p.vibratoSpeed * 0.01;
+        const vibratoAmplitude = p.vibratoDepth * 0.5;
+        let vibratoPhase = 0;
 
-        attack = attack * sampleRate || 9;
-        decay *= sampleRate;
-        sustain *= sampleRate;
-        release *= sampleRate;
-        delay *= sampleRate;
-        deltaSlide *= 500 * PI2 / sampleRate ** 3;
-        modulation *= PI2 / sampleRate;
-        pitchJump *= PI2 / sampleRate;
-        pitchJumpTime *= sampleRate;
-        let repeatTimeSamples = repeatTime * sampleRate | 0;
+        // === PITCH JUMP — multiplicative to period, Bfxr formula ===
+        // p.pitchJump range -1..1 matches Bfxr pitch_jump_amount
+        const pja = p.pitchJump;
+        const jumpMultiplier = pja >= 0
+            ? 1.0 - pja * pja * 0.9
+            : 1.0 + pja * pja * 10.0;
 
-        let v_phase = 0;
-        let flangerBuffer = new Float32Array(1024);
-        let flangerPosIn = 0;
+        // === ENVELOPE lengths in samples ===
+        // Bfxr stages: attack → sustain-with-punch (= p.decay) → fade-to-zero (= p.sustain)
+        // CyberFX param names kept as-is; decay=Bfxr sustain stage, sustain=Bfxr decay stage
+        const attackSamples  = p.attack  * SR || 9;
+        const decaySamples   = p.decay   * SR;      // Bfxr stage 1: flat with punch
+        const sustainSamples = p.sustain * SR;       // Bfxr stage 2: fade to 0
+        const releaseSamples = p.release * SR;       // CyberFX-only tail
+        const delaySamples   = p.delay   * SR;
+        const length = attackSamples + decaySamples + sustainSamples + releaseSamples + delaySamples | 0;
+        if (length <= 0) return;
 
-        length = attack + decay + sustain + release + delay | 0;
+        // Pitch jump fires at this sample (Bfxr: onset_percent * length + 32; 0 = never)
+        const pitchJumpSample = p.pitchJumpTime < 1.0 ? p.pitchJumpTime * length + 32 : 0;
+        let pitchJumpApplied = false;
 
-        for (; i < length; b[i++] = s * volume) {
+        // === SQUARE DUTY — Bfxr convention: duty = 0.5 − squareDuty_param × 0.5 ===
+        // SaveLoad sets shapeCurve = bfxr.squareDuty × 2, so squareDuty_param = shapeCurve/2
+        const initSquareDuty = 0.5 - (p.shapeCurve / 2) * 0.5;
+        let squareDuty = initSquareDuty;
+        const squareDutySweep = -p.dutySweep * 0.00005; // Bfxr formula
 
-            // Frequency Sweep & Min Cutoff
-            slide += deltaSlide;
-            frequency += slide;
-            let currentFreq = frequency;
+        // === FLANGER — state-based accumulation (like Bfxr) ===
+        const initFlangerOffset = p.flangerOffset * p.flangerOffset * 1020.0 * (p.flangerOffset < 0 ? -1 : 1);
+        let flangerOffset = initFlangerOffset;
+        const flangerDelta  = p.flangerSweep * p.flangerSweep * p.flangerSweep * 0.2;
+        const flangerActive = p.flangerOffset !== 0 || p.flangerSweep !== 0;
+        const flangerBuffer = new Float32Array(1024);
+        let flangerPos = 0;
 
-            if (minFrequency > 0 && currentFreq < minFrequency) {
-                length = i; break;
+        // Helper: compute LP filter damping from current cutoff + resonance (Bfxr formula)
+        const calcDamping = (cutoff) => {
+            let d = 5.0 / (1.0 + p.lpFilterResonance * p.lpFilterResonance * 20.0) * (0.01 + cutoff);
+            return 1.0 - clamp(d, 0, 0.8);
+        };
+
+        // === LP FILTER — Bfxr one-pole state-variable ===
+        const filterParam     = p.filter;
+        const initLpCutoff    = filterParam > 0 ? filterParam * filterParam * filterParam * 0.1 : 0;
+        let lpFilterCutoff    = initLpCutoff;
+        const lpFilterDeltaCutoff = 1.0 + p.lpFilterCutoffSweep * 0.0001;
+        const lpFilterOn      = filterParam > 0 && filterParam < 1.0;
+        let lpFilterDamping   = calcDamping(lpFilterCutoff);
+        let lpFilterPos = 0, lpFilterDeltaPos = 0, lpFilterOldPos = 0;
+
+        // === HP FILTER — Bfxr one-pole (negative filter param activates HP) ===
+        const hpParam      = filterParam < 0 ? -filterParam : 0;
+        const initHpCutoff = hpParam * hpParam * 0.1;
+        let hpFilterCutoff = initHpCutoff;
+        const hpFilterDeltaCutoff = 1.0 + (p.hpFilterCutoffSweep || 0) * 0.0003;
+        let hpFilterPos    = 0;
+        const filtersActive = lpFilterOn || hpFilterCutoff > 0;
+
+        // === BIT CRUSH — Bfxr sample-and-hold with sweep ===
+        const initBcFreq   = 1.0 - Math.pow(clamp(p.bitCrush, 0, 1), 1.0 / 3.0);
+        let bitcrush_freq  = initBcFreq;
+        let bitcrush_phase = 0;
+        let bitcrush_last  = 0;
+        const bitcrush_freq_sweep = -p.bitCrushSweep / length;
+
+        // === REPEAT ===
+        const repeatTimeSamples = p.repeatTime * SR | 0;
+        let repeatCounter = 0;
+
+        // === OVERTONES ===
+        const overtones       = p.overtones * 10 | 0;
+        const overtoneFalloff = p.overtoneFalloff;
+
+        // === CyberFX-SPECIFIC params ===
+        const modulation        = p.modulation * PI2 / SR;
+        const noise             = p.noise;
+        const masterVolume      = p.masterVolume;
+        const sustainVolume     = p.sustainVolume;
+        const sustainPunch      = p.sustainPunch;
+        const compressionAmount = p.compressionAmount;
+        const compression_factor = 1.0 / (1.0 + 4.0 * compressionAmount);
+        const safeVolume = masterVolume || 1e-9;
+
+        // === OSCILLATOR state ===
+        let phase = 0; // integer phase counter 0..periodTemp-1 (like Bfxr)
+        const noiseBuffer = new Array(32).fill(0).map(() => Math.random() * 2 - 1);
+        let bitnoiseState = 1 << 14;
+        let modOffset = 0;
+
+        const b = [];
+
+        for (let i = 0; i < length; i++) {
+
+            // === REPEAT — partial reset (Bfxr resets sweeps but not period or envelope) ===
+            if (repeatTimeSamples > 0 && ++repeatCounter >= repeatTimeSamples) {
+                repeatCounter    = 0;
+                slideRate        = startSlideRate;
+                pitchJumpApplied = false;
+                flangerOffset    = initFlangerOffset;
+                lpFilterCutoff   = initLpCutoff;
+                lpFilterDamping  = calcDamping(lpFilterCutoff);
+                lpFilterPos = lpFilterDeltaPos = hpFilterPos = 0;
+                hpFilterCutoff   = initHpCutoff;
+                squareDuty       = initSquareDuty;
+                bitcrush_freq    = initBcFreq;
             }
 
-            // Vibrato
-            if (vibratoDepth > 0) {
-                v_phase += vibratoSpeed;
-                currentFreq *= (1 + Math.sin(v_phase * PI2) * vibratoDepth * 0.5);
+            // === PITCH JUMP ===
+            if (!pitchJumpApplied && pitchJumpSample > 0 && i >= pitchJumpSample) {
+                period *= jumpMultiplier;
+                pitchJumpApplied = true;
             }
 
-            if (!(++crush % (bitCrush * 100 | 0))) {
+            // === SLIDE (Bfxr: period *= slideRate each sample) ===
+            slideRate += deltaSlideAccel;
+            period    *= slideRate;
 
-                let s_total = 0;
-                let o_strength = 1;
+            // === MIN FREQUENCY CHECK ===
+            if (period > maxPeriod) {
+                period = maxPeriod;
+                if (mfParam > 0) break; // mute like Bfxr
+            }
 
-                // Duty Sweep (for Square Duty shape)
-                let c_shapeCurve = shapeCurve;
-                if (shape === 5) {
-                    c_shapeCurve = Math.max(0, Math.min(3, shapeCurve + i * dutySweep));
-                }
+            // === VIBRATO (Bfxr: sin without PI2 on argument) ===
+            let periodTemp = period;
+            if (vibratoAmplitude > 0) {
+                vibratoPhase += vibratoSpeed;
+                periodTemp = period * (1.0 + Math.sin(vibratoPhase) * vibratoAmplitude);
+            }
+            periodTemp = Math.max(8, periodTemp | 0); // integer period, min 8 (Bfxr)
 
-                for (let k = 0; k <= overtones; k++) {
-                    let kt = t * (k + 1);
-                    let s_k = shape ? shape > 1 ? shape > 2 ? shape > 3 ? shape > 4 ? shape > 5 ? shape > 6 ? shape > 7 ? shape > 8 ?
-                        // 9 Breaker
-                        (abs(1 - (kt / PI2 % 1) ** 2 * 2) - 1) :
-                        // 8 Whistle
-                        (0.75 * Math.sin(kt) + 0.25 * Math.sin(kt * 20)) :
-                        // 7 Bitnoise
-                        ((bitnoiseState = bitnoiseState >> 1 | ((bitnoiseState >> 1 & 1) ^ (bitnoiseState & 1)) << 14), (bitnoiseState & 1) - 0.5) :
-                        // 6 White Noise
-                        (Math.random() * 2 - 1) :
-                        // 5 Square Duty
-                        (kt / PI2 % 1 < c_shapeCurve / 2 ? 1 : -1) :
-                        // 4 Noise (ZzFX)
-                        Math.sin(kt ** 3) :
-                        // 3 Tan
-                        Math.max(Math.min(Math.tan(kt), 1), -1) :
-                        // 2 Saw
-                        1 - (2 * kt / PI2 % 2 + 2) % 2 :
-                        // 1 Triangle
-                        1 - 4 * abs(Math.round(kt / PI2) - kt / PI2) :
-                        // 0 Sin
-                        Math.sin(kt);
+            // === NOISE — frequency modulation (CyberFX-specific) ===
+            if (noise > 0) {
+                const nfm = 1 + noise * Math.sin(Math.pow(i, 5));
+                if (nfm > 0) periodTemp = Math.max(8, (periodTemp / nfm) | 0);
+            }
 
-                    s_total += s_k * o_strength;
-                    o_strength *= (1 - overtoneFalloff);
-                }
-                s = s_total;
+            // === SQUARE DUTY SWEEP (Bfxr: once per output sample) ===
+            if (p.shape === 5) {
+                squareDuty = clamp(squareDuty + squareDutySweep, 0.001, 0.5);
+            }
 
-                // Envelope logic
-                let envVol = (i < attack ? i / attack :
-                    i < attack + decay ?
-                        1 - ((i - attack) / decay) * (1 - sustainVolume) + (i < attack + 100 ? sustainPunch : 0) : // simplified punch
-                        i < attack + decay + sustain ?
-                            sustainVolume + (sustainPunch * (1 - (i - attack - decay) / sustain)) : // fade punch
-                            i < length - delay ?
-                                (length - i - delay) / release * sustainVolume :
-                                0);
+            // === FLANGER OFFSET SWEEP (Bfxr: once per output sample) ===
+            if (flangerActive) flangerOffset += flangerDelta;
 
-                // Simplified Punch
-                if (i < attack + decay + sustain) {
-                    let punchMult = 1 + sustainPunch;
-                    if (i > attack) envVol *= punchMult;
-                }
+            // === HP FILTER CUTOFF SWEEP (Bfxr: once per output sample) ===
+            if (filtersActive && hpFilterDeltaCutoff !== 1.0) {
+                hpFilterCutoff = clamp(hpFilterCutoff * hpFilterDeltaCutoff, 0.00001, 0.1);
+            }
 
-                s *= envVol;
+            // === BIT CRUSH (Bfxr: sample-and-hold, once per output sample) ===
+            bitcrush_phase += bitcrush_freq;
+            let sampleUpdated = false;
+            if (bitcrush_phase > 1) {
+                bitcrush_phase = 0;
+                sampleUpdated  = true;
+            }
+            const bcMult = lerp(1, 50 * bitcrush_freq, Math.sqrt(bitcrush_freq));
+            bitcrush_freq = clamp(bitcrush_freq + bcMult * bitcrush_freq_sweep, 0.00001, 1);
 
-                // Flanger
-                if (abs(flangerOffset) > 0 || abs(flangerSweep) > 0) {
-                    let f_off = abs(flangerOffset + i * flangerSweep) | 0;
-                    f_off = Math.min(1023, f_off);
-                    flangerBuffer[flangerPosIn & 1023] = s;
-                    s += flangerBuffer[(flangerPosIn - f_off + 1024) & 1023];
-                    flangerPosIn++;
-                }
+            // === 8× SUPERSAMPLING (like Bfxr) ===
+            let superSample = 0;
+            for (let j = 0; j < 8; j++) {
 
-                s = delay ? s / 2 + (delay > i ? 0 :
-                    (i < length - delay ? 1 : (length - i) / delay) *
-                    b[i - delay | 0] / 2 / safeVolume) : s;
-
-                // Filter & Sweep
-                if (filter) {
-                    // Update coefficients for sweep
-                    if (filterSweep != 1.0) {
-                        w *= filterSweep;
-                        w = Math.max(0.00001, Math.min(Math.PI * 0.99, w));
-                        cos = Math.cos(w);
-                        alpha = Math.sin(w) / 2 / (2 + filterRes * 20); // simplified resonance
-                        a0 = 1 + alpha;
-                        a1 = -2 * cos / a0;
-                        a2 = (1 - alpha) / a0;
-                        b0 = (1 + sign(filter) * cos) / 2 / a0;
-                        b1 = -(sign(filter) + cos) / a0;
-                        b2 = b0;
+                // Advance integer phase; refresh noise buffers at period boundary (Bfxr)
+                if (++phase >= periodTemp) {
+                    phase -= periodTemp;
+                    if (p.shape === 6) { // White noise: new random values each period
+                        for (let n = 0; n < 32; n++) noiseBuffer[n] = Math.random() * 2 - 1;
+                    } else if (p.shape === 7) { // Bitnoise: advance SN76489 LFSR each period
+                        const fb = ((bitnoiseState >> 1) & 1) ^ (bitnoiseState & 1);
+                        bitnoiseState = (bitnoiseState >> 1) | (fb << 14);
                     }
-                    s = y1 = b2 * x2 + b1 * (x2 = x1) + b0 * (x1 = s) - a2 * y2 - a1 * (y2 = y1);
                 }
+
+                let s = 0;
+                let overtoneStrength = 1;
+                for (let k = 0; k <= overtones; k++) {
+                    const tempPhase = (phase * (k + 1)) % periodTemp;
+                    const pos = tempPhase / periodTemp; // 0..1 fractional position in cycle
+                    let s_k;
+                    switch (p.shape) {
+                        case 0: // Sin
+                            s_k = Math.sin(pos * PI2); break;
+                        case 1: // Triangle (matches Bfxr waveType 4)
+                            s_k = Math.abs(1 - pos * 2) - 1; break;
+                        case 2: // Saw (matches Bfxr waveType 1)
+                            s_k = 1.0 - pos * 2.0; break;
+                        case 3: // Tan (matches Bfxr waveType 6)
+                            s_k = clamp(Math.tan(Math.PI * pos), -1, 1); break;
+                        case 4: // CyberFX Noise: sin(angle³)
+                            s_k = Math.sin(Math.pow(pos * PI2, 3)); break;
+                        case 5: // Square with duty (matches Bfxr waveType 0)
+                            s_k = pos < squareDuty ? 0.5 : -0.5; break;
+                        case 6: // White noise — sampled from buffer (matches Bfxr waveType 3)
+                            s_k = noiseBuffer[(tempPhase * 32 / periodTemp | 0) % 32]; break;
+                        case 7: // Bitnoise — SN76489 LFSR (matches Bfxr waveType 9)
+                            s_k = (~bitnoiseState & 1) - 0.5; break;
+                        case 8: { // Whistle (matches Bfxr waveType 7)
+                            const a1 = Math.sin(pos * PI2);
+                            const a2 = Math.sin((tempPhase * 20 % periodTemp) / periodTemp * PI2);
+                            s_k = 0.75 * a1 + 0.25 * a2; break;
+                        }
+                        case 9: // Breaker (matches Bfxr waveType 8)
+                            s_k = Math.abs(1 - pos * pos * 2) - 1; break;
+                        default:
+                            s_k = Math.sin(pos * PI2);
+                    }
+                    s += s_k * overtoneStrength;
+                    overtoneStrength *= (1 - overtoneFalloff);
+                }
+
+                // === LP + HP FILTER — Bfxr one-pole state-variable (inner loop) ===
+                if (filtersActive) {
+                    lpFilterOldPos  = lpFilterPos;
+                    lpFilterCutoff  = clamp(lpFilterCutoff * lpFilterDeltaCutoff, 0, 0.1);
+                    if (lpFilterOn) {
+                        lpFilterDeltaPos += (s - lpFilterPos) * lpFilterCutoff;
+                        lpFilterDeltaPos *= lpFilterDamping;
+                    } else {
+                        lpFilterPos = s; lpFilterDeltaPos = 0;
+                    }
+                    lpFilterPos += lpFilterDeltaPos;
+                    hpFilterPos += lpFilterPos - lpFilterOldPos;
+                    hpFilterPos *= (1.0 - hpFilterCutoff);
+                    s = hpFilterPos;
+                }
+
+                // === FLANGER — Bfxr state-based (write + read ring buffer each inner sample) ===
+                if (flangerActive) {
+                    flangerBuffer[flangerPos & 1023] = s;
+                    const fi = clamp(abs(flangerOffset) | 0, 0, 1023);
+                    s += flangerBuffer[(flangerPos - fi + 1024) & 1023];
+                    flangerPos = (flangerPos + 1) & 1023;
+                }
+
+                superSample += s;
             }
 
-            f = (currentFreq) * Math.cos(modulation * modOffset++);
-            t += f + f * noise * Math.sin(i ** 5);
+            // Clamp before averaging (Bfxr: ±8)
+            superSample = clamp(superSample, -8, 8);
 
-            // Pitch Jump
-            if (jump && ++jump > pitchJumpTime) {
-                frequency += pitchJump;
-                startFrequency += pitchJump;
-                jump = 0;
+            // Bit crush: sample-and-hold
+            if (sampleUpdated) bitcrush_last = superSample;
+            superSample = bitcrush_last;
+
+            // === ENVELOPE — Bfxr stages mapped to CyberFX param names ===
+            // attack  → ramp 0→1  (Bfxr stage 0)
+            // decay   → flat with sustainPunch taper  (Bfxr stage 1)
+            // sustain → linear fade 1→0  (Bfxr stage 2)
+            // release → scaled tail (CyberFX only, scaled by sustainVolume)
+            let envVol;
+            if (i < attackSamples) {
+                envVol = i / attackSamples;
+            } else if (i < attackSamples + decaySamples) {
+                const t = (i - attackSamples) / (decaySamples || 1);
+                envVol = 1.0 + (1.0 - t) * 2.0 * sustainPunch;            // Bfxr stage 1
+            } else if (i < attackSamples + decaySamples + sustainSamples) {
+                envVol = 1.0 - (i - attackSamples - decaySamples) / (sustainSamples || 1); // Bfxr stage 2
+            } else {
+                const remaining = length - delaySamples - i;
+                envVol = releaseSamples > 0 ? clamp(remaining / releaseSamples, 0, 1) * sustainVolume : 0;
             }
 
-            // Repeat
-            if (repeatTimeSamples && !(++repeat % repeatTimeSamples)) {
-                frequency = startFrequency;
-                slide = startSlide;
-                jump ||= 1;
+            // masterVolume² × 0.125 averages the 8 supersamples (Bfxr convention)
+            let sample = masterVolume * masterVolume * envVol * superSample * 0.125;
+
+            // === RING MODULATION (CyberFX-specific) ===
+            if (modulation > 0) sample *= Math.cos(modulation * modOffset++);
+
+            // === DELAY / ECHO (CyberFX-specific) ===
+            if (delaySamples > 0) {
+                sample = delaySamples > i
+                    ? sample / 2
+                    : sample / 2 + (i < length - delaySamples ? 1 : (length - i) / delaySamples)
+                      * (b[i - delaySamples | 0] || 0) / 2 / safeVolume;
             }
 
-            // Compression
+            // === COMPRESSION (Bfxr formula) ===
             if (compressionAmount > 0) {
-                if (s > 0) s = Math.pow(s, 1 / (1 + 4 * compressionAmount));
-                else s = -Math.pow(abs(s), 1 / (1 + 4 * compressionAmount));
+                sample = sample > 0
+                    ? Math.pow(sample, compression_factor)
+                    : -Math.pow(-sample, compression_factor);
             }
+
+            b[i] = sample;
         }
 
         const buffer = new Float32Array(b);
